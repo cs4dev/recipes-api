@@ -22,6 +22,9 @@ import (
 	"log"
 	"os"
 
+	"github.com/gin-contrib/sessions"
+	redisStore "github.com/gin-contrib/sessions/redis"
+
 	"github.com/cs4dev/recipes-api/handlers"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis"
@@ -32,6 +35,7 @@ import (
 
 var ctx context.Context
 var recipesHandler *handlers.RecipesHandler
+var authHandler *handlers.AuthHandler
 
 func init() {
 	ctx = context.Background()
@@ -41,7 +45,8 @@ func init() {
 		log.Fatal(err)
 	}
 	log.Println("Connected to MongoDB")
-	collection := client.Database(os.Getenv("MONGO_DATABASE")).Collection("recipes")
+	collectionRecipes := client.Database(os.Getenv("MONGO_DATABASE")).Collection("recipes")
+	collectionUsers := client.Database(os.Getenv("MONGO_DATABASE")).Collection("users")
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
@@ -49,16 +54,51 @@ func init() {
 		DB:       0,
 	})
 
-	recipesHandler = handlers.NewRecipesHandler(ctx, collection, redisClient)
+	recipesHandler = handlers.NewRecipesHandler(ctx, collectionRecipes, redisClient)
+	authHandler = handlers.NewAuthHandler(ctx, collectionUsers)
 
 }
 
+// func AuthMiddleware() gin.HandlerFunc {
+// 	return func(c *gin.Context) {
+// 		tokenValue := c.GetHeader("Authorization")
+// 		claims := &handlers.Claims{}
+
+// 		tkn, err := jwt.ParseWithClaims(tokenValue, claims,
+// 			func(token *jwt.Token) (interface{}, error) {
+// 				return []byte(os.Getenv("JWT_SECRET")), nil
+// 			})
+// 		if err != nil {
+// 			c.AbortWithStatus(http.StatusUnauthorized)
+// 		}
+// 		if tkn == nil || !tkn.Valid {
+// 			c.AbortWithStatus(http.StatusUnauthorized)
+// 		}
+// 		c.Next()
+// 	}
+// }
+
 func main() {
 	router := gin.Default()
-	router.POST("/recipes", recipesHandler.NewRecipeHandler)
-	router.GET("/recipes", recipesHandler.ListRecipesHandler)
-	router.GET("/recipes/search", recipesHandler.SearchRecipesHandler)
-	router.PUT("/recipes/:id", recipesHandler.UpdateRecipeHandler)
-	router.DELETE("/recipes/:id", recipesHandler.DeleteRecipeHandler)
+
+	store, _ := redisStore.NewStore(10, "tcp", "localhost:6379", "", []byte("secret"))
+
+	router.Use(sessions.Sessions("recipes_api", store))
+
+	router.POST("/signin", authHandler.SignInHandler)
+	router.POST("/refresh", authHandler.RefreshHandler)
+	router.POST("/signout", authHandler.SignOutHandler)
+
+	authorized := router.Group("/")
+
+	authorized.Use(authHandler.AuthMiddleware())
+	{
+		authorized.GET("/recipes", recipesHandler.ListRecipesHandler)
+		authorized.POST("/recipes", recipesHandler.NewRecipeHandler)
+		authorized.GET("/recipes/search", recipesHandler.SearchRecipesHandler)
+		authorized.PUT("/recipes/:id", recipesHandler.UpdateRecipeHandler)
+		authorized.DELETE("/recipes/:id", recipesHandler.DeleteRecipeHandler)
+	}
+
 	router.Run()
 }

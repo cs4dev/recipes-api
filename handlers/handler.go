@@ -83,6 +83,7 @@ func (handler *RecipesHandler) ListRecipesHandler(c *gin.Context) {
 //		description: Invald input
 func (handler *RecipesHandler) NewRecipeHandler(c *gin.Context) {
 	var recipe models.Recipe
+
 	if err := c.ShouldBindJSON(&recipe); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
